@@ -32,7 +32,17 @@ class Blum:
             
         self.auth_token = ""
         self.ref_token=""
-        headers = {'User-Agent': UserAgent(os='android').random}
+        headers = {
+            'accept': 'application/json, text/plain, */*',
+            'cache-control': 'no-cache',
+            'content-type': 'application/json',
+            'origin': 'https://telegram.blum.codes',
+            'pragma': 'no-cache',
+            'priority': 'u=1, i',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': UserAgent(os='android').random}
         self.session = aiohttp.ClientSession(headers=headers, trust_env=True, connector=aiohttp.TCPConnector(verify_ssl=False))
 
     async def main(self):
@@ -67,8 +77,9 @@ class Blum:
                 await self.get_referral_info()
                 await asyncio.sleep(random.randint(*config.MINI_SLEEP))
                 
-                await self.do_tasks()
-                await asyncio.sleep(random.randint(*config.MINI_SLEEP))
+                if config.DO_TASKS:
+                    await self.do_tasks()
+                    await asyncio.sleep(random.randint(*config.MINI_SLEEP))
                 
                 if config.SPEND_DIAMONDS:
                     diamonds_balance = await self.get_diamonds_balance()
@@ -105,6 +116,10 @@ class Blum:
         try:
             resp = await self.session.post("https://game-domain.blum.codes/api/v1/farming/claim",proxy = self.proxy)
             resp_json = await resp.json()
+            if 'message' in resp_json:
+                if not (await self.is_token_valid()):
+                    await self.refresh()
+                return 0
             return int(resp_json.get("timestamp")/1000), resp_json.get("availableBalance")
         except:
             pass
@@ -112,6 +127,11 @@ class Blum:
     async def start(self):
         try:
             resp = await self.session.post("https://game-domain.blum.codes/api/v1/farming/start",proxy = self.proxy)
+            resp_json = await resp.json()
+            if 'message' in resp_json:
+                if not (await self.is_token_valid()):
+                    await self.refresh()
+                return 0
         except:
             pass
         
@@ -120,6 +140,9 @@ class Blum:
             
             resp = await self.session.get("https://game-domain.blum.codes/api/v1/user/balance",proxy = self.proxy)
             resp_json = await resp.json()
+            if 'message' in resp_json:
+                if not (await self.is_token_valid()):
+                    await self.refresh()
             timestamp = resp_json.get("timestamp")
             if resp_json.get("farming"):
                 start_time = resp_json.get("farming").get("startTime")
@@ -135,7 +158,7 @@ class Blum:
             if tg_web_data == False:
                 return False
             json_data = {"query": tg_web_data}
-            resp = await self.session.post("https://gateway.blum.codes/v1/auth/provider/PROVIDER_TELEGRAM_MINI_APP", json=json_data,proxy = self.proxy)
+            resp = await self.session.post("https://user-domain.blum.codes/api/v1/auth/provider/PROVIDER_TELEGRAM_MINI_APP", json=json_data,proxy = self.proxy)
             resp = await resp.json()
             self.ref_token = resp.get("token").get("refresh")
             self.session.headers['Authorization'] = "Bearer " + (resp).get("token").get("access")
@@ -170,8 +193,12 @@ class Blum:
     
     async def get_referral_info(self):
         try:
-            resp = await self.session.get("https://gateway.blum.codes/v1/friends/balance",proxy = self.proxy)
+            resp = await self.session.get("https://user-domain.blum.codes/api/v1/friends/balance",proxy = self.proxy)
             resp_json = await resp.json()
+            if 'message' in resp_json:
+                if not (await self.is_token_valid()):
+                    await self.refresh()
+                return 0
             if resp_json['canClaim'] == True:
                 claimed = await self.claim_referral()
                 logger.success(f"get_ref | Thread {self.thread} | {self.name} | Claimed referral reward! Claimed: {claimed}")
@@ -179,42 +206,43 @@ class Blum:
             pass
     
     async def claim_referral(self):
-        resp = await self.session.post("https://gateway.blum.codes/v1/friends/claim",proxy = self.proxy)
+        resp = await self.session.post("https://user-domain.blum.codes/api/v1/friends/claim",proxy = self.proxy)
         resp_json = await resp.json()
+        if 'message' in resp_json:
+            if not (await self.is_token_valid()):
+                await self.refresh()
+            return 0
         return resp_json['claimBalance']
     
     async def do_tasks(self):
-        resp = await self.session.get("https://game-domain.blum.codes/api/v1/tasks",proxy = self.proxy)
-        resp_json = await resp.json()
+        resp = await self.session.get("https://earn-domain.blum.codes/api/v1/tasks",proxy = self.proxy)
+        resp_json = (await resp.json())
+        if 'message' in resp_json:
+            if not (await self.is_token_valid()):
+                await self.refresh()
+            return 0
         try:
-            for task in resp_json:
+            for task in resp_json[1]['subSections']:
+                if task['title'] == "Frens":
+                    continue
                 tasks = task['tasks']
                 for task in tasks:
-                    if "subTasks" in task:
-                        for subtask in task['subTasks']:
-                            if subtask['status'] == "NOT_STARTED":
-                                await self.session.post(f"https://game-domain.blum.codes/api/v1/tasks/{subtask['id']}/start",proxy=self.proxy)
-                                logger.info(f"tasks | Thread {self.thread} | {self.name} | Summer Quest | TRY DO {subtask['title']} task!")
-                                await asyncio.sleep(random.randint(*config.MINI_SLEEP))
-                            elif subtask['status'] == "READY_FOR_CLAIM":
-                                answer = await self.session.post(f"https://game-domain.blum.codes/api/v1/tasks/{subtask['id']}/claim",proxy=self.proxy)
-                                answer = await answer.json()
-                                logger.success(f"tasks | Thread {self.thread} | {self.name} | Summer Quest | DONE {subtask['title']} task!")
-                                await asyncio.sleep(random.randint(*config.MINI_SLEEP))
-                    else:  
+                    if random.randint(0,2) == 0:
                         if task['status'] == "NOT_STARTED":
-                            await self.session.post(f"https://game-domain.blum.codes/api/v1/tasks/{task['id']}/start",proxy=self.proxy)
+                            await self.session.post(f"https://earn-domain.blum.codes/api/v1/tasks/{task['id']}/start",proxy=self.proxy)
                             await asyncio.sleep(random.randint(*config.MINI_SLEEP))
                         elif task['status'] == "READY_FOR_CLAIM":
-                            answer = await self.session.post(f"https://game-domain.blum.codes/api/v1/tasks/{task['id']}/claim",proxy=self.proxy)
+                            answer = await self.session.post(f"https://earn-domain.blum.codes/api/v1/tasks/{task['id']}/claim",proxy=self.proxy)
                             answer = await answer.json()
+                            if 'message' in answer:
+                                continue
                             logger.success(f"tasks | Thread {self.thread} | {self.name} | Claimed TASK reward! Claimed: {answer['reward']}")
                             await asyncio.sleep(random.randint(*config.MINI_SLEEP))
         except Exception as err:
             logger.error(f"tasks | Thread {self.thread} | {self.name} | {err}")
     
     async def is_token_valid(self):
-        response = await self.session.get("https://gateway.blum.codes/v1/user/me",proxy=self.proxy)
+        response = await self.session.get("https://user-domain.blum.codes/api/v1/user/me",proxy=self.proxy)
         
         if response.status == 200:
             return True
@@ -234,7 +262,7 @@ class Blum:
         if "authorization" in self.session.headers:
             del self.session.headers['authorization']
             
-        response = await self.session.post("https://gateway.blum.codes/v1/auth/refresh",json=refresh_payload,proxy=self.proxy)
+        response = await self.session.post("https://user-domain.blum.codes/api/v1/auth/refresh",json=refresh_payload,proxy=self.proxy)
         
         if response.status == 200:
             data = await response.json()  
@@ -254,6 +282,10 @@ class Blum:
     async def get_diamonds_balance(self):
         resp = await self.session.get("https://game-domain.blum.codes/api/v1/user/balance",proxy = self.proxy)
         resp_json = await resp.json()
+        if 'message' in resp_json:
+            if not (await self.is_token_valid()):
+                await self.refresh()
+            return 0
         return resp_json['playPasses']
     
     async def game(self):
@@ -289,8 +321,12 @@ class Blum:
                 await self.refresh()
         else:
             logger.error(f"game | Thread {self.thread} | {self.name} | {await response.text()}")
-    
+     
     async def claim_diamond(self):
         resp = await self.session.post("https://game-domain.blum.codes/api/v1/daily-reward?offset=-180", proxy=self.proxy)
         txt = await resp.text()
+        if 'message' in txt:
+            if not (await self.is_token_valid()):
+                await self.refresh()
+                return False
         return True if txt == 'OK' else txt
